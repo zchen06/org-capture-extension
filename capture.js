@@ -40,7 +40,7 @@
       this.document = document;
       this.location = location;
 
-      this.selection_text = escapeIt(window.getSelection().toString());
+      this.selection_text = escapeIt(getSelectionAsOrg());
       this.encoded_url = encodeURIComponent(location.href);
       this.escaped_title = escapeIt(document.title);
 
@@ -79,6 +79,72 @@
     }
   }
 
+
+  function getSelectionAsOrg() {
+    var selection = window.getSelection();
+    if (!selection.rangeCount || selection.isCollapsed) return "";
+    var container = document.createElement('div');
+    container.appendChild(selection.getRangeAt(0).cloneContents());
+    return nodeToOrg(container, 0).trim();
+  }
+
+  function nodeToOrg(node, depth) {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+    if (node.nodeType !== Node.ELEMENT_NODE) return "";
+
+    var tag = node.tagName.toLowerCase();
+    var children = Array.from(node.childNodes)
+      .map(function(n) { return nodeToOrg(n, depth); }).join('');
+
+    switch (tag) {
+      case 'a':
+        return node.href ? '[[' + node.href + '][' + children + ']]' : children;
+      case 'b': case 'strong':
+        return '*' + children.trim() + '*';
+      case 'em': case 'i':
+        return '/' + children.trim() + '/';
+      case 'code':
+        var inPre = node.parentElement && node.parentElement.tagName.toLowerCase() === 'pre';
+        return inPre ? children : '~' + children.trim() + '~';
+      case 'pre':
+        return '\n#+BEGIN_SRC\n' + children.trim() + '\n#+END_SRC\n';
+      case 'h1': return '\n* '      + children.trim() + '\n';
+      case 'h2': return '\n** '     + children.trim() + '\n';
+      case 'h3': return '\n*** '    + children.trim() + '\n';
+      case 'h4': return '\n**** '   + children.trim() + '\n';
+      case 'h5': return '\n***** '  + children.trim() + '\n';
+      case 'h6': return '\n****** ' + children.trim() + '\n';
+      case 'img':
+        return node.src ? '[[' + node.src + '][' + (node.alt || node.title || 'image') + ']]' : '';
+      case 'ul': case 'ol':
+        return '\n' + listToOrg(node, tag, depth) + '\n';
+      case 'li':
+        return children;
+      case 'br':
+        return '\n';
+      case 'p':
+        return '\n' + children.trim() + '\n';
+      default:
+        return children;
+    }
+  }
+
+  function listToOrg(listNode, type, depth) {
+    var indent = '  '.repeat(depth);
+    return Array.from(listNode.childNodes)
+      .filter(function(n) { return n.nodeName.toLowerCase() === 'li'; })
+      .map(function(li, i) {
+        var prefix = type === 'ol' ? (i + 1) + '. ' : '- ';
+        var content = Array.from(li.childNodes).map(function(n) {
+          var tag = n.nodeName.toLowerCase();
+          if (tag === 'ul' || tag === 'ol')
+            return '\n' + listToOrg(n, tag, depth + 1);
+          return nodeToOrg(n, depth + 1);
+        }).join('').trim();
+        return indent + prefix + content;
+      })
+      .join('\n');
+  }
 
   function replace_all(str, find, replace) {
     return str.replace(new RegExp(find, 'g'), replace);
