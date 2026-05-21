@@ -83,7 +83,7 @@
 
 
   function getPageAsOrg() {
-    return nodeToOrg(document.body, 0).trim();
+    return nodeToOrg(document.body, 0, false).trim().replace(/\n{3,}/g, '\n\n');
   }
 
   function getSelectionAsOrg() {
@@ -91,35 +91,43 @@
     if (!selection.rangeCount || selection.isCollapsed) return "";
     var container = document.createElement('div');
     container.appendChild(selection.getRangeAt(0).cloneContents());
-    return nodeToOrg(container, 0).trim();
+    return nodeToOrg(container, 0, false).trim().replace(/\n{3,}/g, '\n\n');
   }
 
-  function nodeToOrg(node, depth) {
-    if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+  var BLOCK_TAGS = new Set([
+    'div', 'section', 'article', 'header', 'footer', 'nav', 'aside',
+    'main', 'figure', 'figcaption', 'dl', 'dt', 'dd'
+  ]);
+
+  function nodeToOrg(node, depth, inPre) {
+    if (node.nodeType === Node.TEXT_NODE)
+      return inPre ? node.textContent : node.textContent.replace(/\s+/g, ' ');
     if (node.nodeType !== Node.ELEMENT_NODE) return "";
 
     var tag = node.tagName.toLowerCase();
+    var nowInPre = inPre || tag === 'pre';
     var children = Array.from(node.childNodes)
-      .map(function(n) { return nodeToOrg(n, depth); }).join('');
+      .map(function(n) { return nodeToOrg(n, depth, nowInPre); }).join('');
 
     switch (tag) {
       case 'a':
-        return node.href ? '[[' + node.href + '][' + children + ']]' : children;
+        return node.href ? '[[' + node.href + '][' + children.replace(/\s+/g, ' ').trim() + ']]' : children;
       case 'b': case 'strong':
         return '*' + children.trim() + '*';
       case 'em': case 'i':
         return '/' + children.trim() + '/';
       case 'code':
-        var inPre = node.parentElement && node.parentElement.tagName.toLowerCase() === 'pre';
         return inPre ? children : '~' + children.trim() + '~';
       case 'pre':
         return '\n#+BEGIN_SRC\n' + children.trim() + '\n#+END_SRC\n';
-      case 'h1': return '\n* '      + children.trim() + '\n';
-      case 'h2': return '\n** '     + children.trim() + '\n';
-      case 'h3': return '\n*** '    + children.trim() + '\n';
-      case 'h4': return '\n**** '   + children.trim() + '\n';
-      case 'h5': return '\n***** '  + children.trim() + '\n';
-      case 'h6': return '\n****** ' + children.trim() + '\n';
+      case 'blockquote':
+        return '\n#+BEGIN_QUOTE\n' + children.trim() + '\n#+END_QUOTE\n';
+      case 'h1': return '\n\n* '      + children.trim() + '\n\n';
+      case 'h2': return '\n\n** '     + children.trim() + '\n\n';
+      case 'h3': return '\n\n*** '    + children.trim() + '\n\n';
+      case 'h4': return '\n\n**** '   + children.trim() + '\n\n';
+      case 'h5': return '\n\n***** '  + children.trim() + '\n\n';
+      case 'h6': return '\n\n****** ' + children.trim() + '\n\n';
       case 'img':
         return node.src ? '[[' + node.src + '][' + (node.alt || node.title || 'image') + ']]' : '';
       case 'ul': case 'ol':
@@ -129,9 +137,9 @@
       case 'br':
         return '\n';
       case 'p':
-        return '\n' + children.trim() + '\n';
+        return '\n\n' + children.trim() + '\n\n';
       default:
-        return children;
+        return BLOCK_TAGS.has(tag) ? '\n' + children + '\n' : children;
     }
   }
 
