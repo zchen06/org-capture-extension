@@ -29,10 +29,11 @@
    createCaptureURI() {
      var protocol = "capture";
      var template = (this.selection_text != "" ? this.selectedTemplate : this.unselectedTemplate);
+     var body = (this.selection_text != "" ? this.selection_text : this.page_text);
      if (this.useNewStyleLinks)
-       return "org-protocol://"+protocol+"?template="+template+'&url='+this.encoded_url+'&title='+this.escaped_title+'&body='+this.selection_text;
+       return "org-protocol://"+protocol+"?template="+template+'&url='+this.encoded_url+'&title='+this.escaped_title+'&body='+body;
      else
-       return "org-protocol://"+protocol+":/"+template+'/'+this.encoded_url+'/'+this.escaped_title+'/'+this.selection_text;
+       return "org-protocol://"+protocol+":/"+template+'/'+this.encoded_url+'/'+this.escaped_title+'/'+body;
     }
 
     constructor() {
@@ -41,6 +42,7 @@
       this.location = location;
 
       this.selection_text = escapeIt(getSelectionAsOrg());
+      this.page_text = escapeIt(getPageAsOrg());
       this.encoded_url = encodeURIComponent(location.href);
       this.escaped_title = escapeIt(document.title);
 
@@ -79,6 +81,10 @@
     }
   }
 
+
+  function getPageAsOrg() {
+    return nodeToOrg(document.body, 0).trim();
+  }
 
   function getSelectionAsOrg() {
     var selection = window.getSelection();
