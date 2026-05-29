@@ -110,24 +110,36 @@
       .map(function(n) { return nodeToOrg(n, depth, nowInPre); }).join('');
 
     switch (tag) {
-      case 'a':
-        return node.href ? '[[' + node.href + '][' + children.replace(/\s+/g, ' ').trim() + ']]' : children;
-      case 'b': case 'strong':
-        return '*' + children.trim() + '*';
-      case 'em': case 'i':
-        return '/' + children.trim() + '/';
+      case 'style': case 'script': case 'noscript': case 'template': return '';
+      case 'a': {
+        var href = node.href;
+        if (!href || href.startsWith('javascript:') || href === '#') {
+          var realUrl = node.getAttribute('data-href') ||
+                        node.getAttribute('data-url')  ||
+                        node.getAttribute('data-src')  ||
+                        node.getAttribute('data-file-url');
+          if (realUrl) {
+            try { realUrl = new URL(realUrl, location.href).href; } catch(e) {}
+            return '[[' + realUrl + '][' + children.replace(/\s+/g, ' ').trim() + ']]';
+          }
+          return children;
+        }
+        return '[[' + href + '][' + children.replace(/\s+/g, ' ').trim() + ']]';
+      }
+      case 'b': case 'strong': { var t = children.trim(); return t ? '*' + t + '*' : ''; }
+      case 'em': case 'i':     { var t = children.trim(); return t ? '/' + t + '/' : ''; }
       case 'code':
-        return inPre ? children : '~' + children.trim() + '~';
+        return inPre ? children : (children.trim() ? '~' + children.trim() + '~' : '');
       case 'pre':
         return '\n#+BEGIN_SRC\n' + children.trim() + '\n#+END_SRC\n';
       case 'blockquote':
         return '\n#+BEGIN_QUOTE\n' + children.trim() + '\n#+END_QUOTE\n';
-      case 'h1': return '\n\n* '      + children.trim() + '\n\n';
-      case 'h2': return '\n\n** '     + children.trim() + '\n\n';
-      case 'h3': return '\n\n*** '    + children.trim() + '\n\n';
-      case 'h4': return '\n\n**** '   + children.trim() + '\n\n';
-      case 'h5': return '\n\n***** '  + children.trim() + '\n\n';
-      case 'h6': return '\n\n****** ' + children.trim() + '\n\n';
+      case 'h1': { var t = children.trim(); return t ? '\n\n* '      + t + '\n\n' : ''; }
+      case 'h2': { var t = children.trim(); return t ? '\n\n** '     + t + '\n\n' : ''; }
+      case 'h3': { var t = children.trim(); return t ? '\n\n*** '    + t + '\n\n' : ''; }
+      case 'h4': { var t = children.trim(); return t ? '\n\n**** '   + t + '\n\n' : ''; }
+      case 'h5': { var t = children.trim(); return t ? '\n\n***** '  + t + '\n\n' : ''; }
+      case 'h6': { var t = children.trim(); return t ? '\n\n****** ' + t + '\n\n' : ''; }
       case 'img':
         return node.src ? '[[' + node.src + '][' + (node.alt || node.title || 'image') + ']]' : '';
       case 'ul': case 'ol':
@@ -138,8 +150,17 @@
         return '\n';
       case 'p':
         return '\n\n' + children.trim() + '\n\n';
-      default:
+      default: {
+        var realUrl = node.getAttribute('data-href') ||
+                      node.getAttribute('data-url')  ||
+                      node.getAttribute('data-src');
+        if (realUrl) {
+          try { realUrl = new URL(realUrl, location.href).href; } catch(e) {}
+          var label = children.replace(/\s+/g, ' ').trim();
+          if (label) return '[[' + realUrl + '][' + label + ']]';
+        }
         return BLOCK_TAGS.has(tag) ? '\n' + children + '\n' : children;
+      }
     }
   }
 
