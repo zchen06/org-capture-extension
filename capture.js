@@ -153,7 +153,10 @@
       default: {
         var realUrl = node.getAttribute('data-href') ||
                       node.getAttribute('data-url')  ||
-                      node.getAttribute('data-src');
+                      node.getAttribute('data-src')  ||
+                      node.getAttribute('href')      ||
+                      node.getAttribute('url')       ||
+                      node.getAttribute('src');
         if (realUrl) {
           try { realUrl = new URL(realUrl, location.href).href; } catch(e) {}
           var label = children.replace(/\s+/g, ' ').trim();
@@ -244,7 +247,8 @@
     }
 
     function off() {
-      document.getElementById(outer_id).style.display = "none";
+      var el = document.getElementById(outer_id);
+      if (el) el.remove();
     }
 
     on();
