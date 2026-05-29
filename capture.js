@@ -106,6 +106,12 @@
 
     var tag = node.tagName.toLowerCase();
     var nowInPre = inPre || tag === 'pre';
+
+    if (!inPre && (tag === 'div' || tag === 'section')) {
+      var tabResult = tryTabsToOrg(node, depth);
+      if (tabResult !== null) return tabResult;
+    }
+
     var children = Array.from(node.childNodes)
       .map(function(n) { return nodeToOrg(n, depth, nowInPre); }).join('');
 
@@ -148,9 +154,23 @@
         return children;
       case 'br':
         return '\n';
+      case 'iframe': {
+        var src = node.src;
+        if (!src) return '';
+        var ytMatch = src.match(/youtube(?:-nocookie)?\.com\/embed\/([^?&/]+)/);
+        if (ytMatch) return '[[https://www.youtube.com/watch?v=' + ytMatch[1] + '][YouTube video]]';
+        var iframeTitle = node.getAttribute('title') || 'embedded content';
+        return '[[' + src + '][' + iframeTitle + ']]';
+      }
       case 'p':
         return '\n\n' + children.trim() + '\n\n';
       default: {
+        var videoId = node.getAttribute('data-video-id');
+        if (videoId) {
+          var ytLabel = (node.getAttribute('data-title') || '').trim();
+          if (!ytLabel || ytLabel === 'Play') ytLabel = 'YouTube video';
+          return '[[https://www.youtube.com/watch?v=' + videoId + '][' + ytLabel + ']]';
+        }
         var realUrl = node.getAttribute('data-href') ||
                       node.getAttribute('data-url')  ||
                       node.getAttribute('data-src')  ||
@@ -182,6 +202,39 @@
         return indent + prefix + content;
       })
       .join('\n');
+  }
+
+  function tryTabsToOrg(node, depth) {
+    var tablist = node.querySelector(
+      ':scope > [role="tablist"], :scope > * > [role="tablist"]'
+    );
+    if (!tablist) return null;
+
+    var panels = Array.from(node.querySelectorAll('[role="tabpanel"]'));
+    if (panels.length === 0) return null;
+
+    var tabs = Array.from(tablist.querySelectorAll('[role="tab"]'));
+    var result = '';
+
+    panels.forEach(function(panel, i) {
+      var tabTitle = '';
+      var labelId = panel.getAttribute('aria-labelledby');
+      if (labelId) {
+        var el = document.getElementById(labelId);
+        if (el) tabTitle = el.textContent.replace(/\s+/g, ' ').trim();
+      }
+      if (!tabTitle && tabs[i])
+        tabTitle = tabs[i].textContent.replace(/\s+/g, ' ').trim();
+
+      var content = Array.from(panel.childNodes)
+        .map(function(n) { return nodeToOrg(n, depth, false); })
+        .join('').trim();
+
+      if (tabTitle) result += '\n\n** ' + tabTitle + '\n\n';
+      if (content)  result += content + '\n';
+    });
+
+    return result.trim() ? result : null;
   }
 
   function replace_all(str, find, replace) {
