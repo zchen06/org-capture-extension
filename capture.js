@@ -230,6 +230,11 @@
         .map(function(n) { return nodeToOrg(n, depth, false); })
         .join('').trim();
 
+      // Shift panel headings one level deeper so they nest under the tab heading (**)
+      content = content.replace(/^(\*+) /gm, function(_, stars) {
+        return '*'.repeat(stars.length + 1) + ' ';
+      });
+
       if (tabTitle) result += '\n\n** ' + tabTitle + '\n\n';
       if (content)  result += content + '\n';
     });
