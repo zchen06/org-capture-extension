@@ -146,8 +146,23 @@
       case 'h4': { var t = children.trim(); return t ? '\n\n**** '   + t + '\n\n' : ''; }
       case 'h5': { var t = children.trim(); return t ? '\n\n***** '  + t + '\n\n' : ''; }
       case 'h6': { var t = children.trim(); return t ? '\n\n****** ' + t + '\n\n' : ''; }
-      case 'img':
-        return node.src ? '[[' + node.src + '][' + (node.alt || node.title || 'image') + ']]' : '';
+      case 'img': {
+        if (!node.src) return '';
+        var w = node.clientWidth  || node.naturalWidth  || 0;
+        var h = node.clientHeight || node.naturalHeight || 0;
+        var MAX_W = 800, MAX_H = 600;
+        var alt  = (node.alt || node.title || 'image').replace(/\s+/g, ' ').trim();
+        var link = '[[' + node.src + '][' + alt + ']]';
+        if (w > 0 || h > 0) {
+          var dw = w > 0 ? Math.min(w, MAX_W) : null;
+          var dh = h > 0 ? Math.min(h, MAX_H) : null;
+          var attr = '#+ATTR_ORG:';
+          if (dw) attr += ' :width '  + dw;
+          if (dh) attr += ' :height ' + dh;
+          return '\n\n' + attr + '\n' + link + '\n\n';
+        }
+        return '\n\n' + link + '\n\n';
+      }
       case 'ul': case 'ol':
         return '\n' + listToOrg(node, tag, depth) + '\n';
       case 'li':
