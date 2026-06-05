@@ -80,18 +80,20 @@ chrome.commands.onCommand.addListener(function (command, tab) {
 });
 
 // Clipboard path trigger #2: right-click context-menu item.
-// Create idempotently and not solely on install — onInstalled is unreliable on a
-// manual unpacked reload, so also run at worker top level and on startup.
+// create() registers the item SYNCHRONOUSLY, so it survives the MV3 service worker
+// being torn down right after an event's synchronous portion. (Wrapping it in
+// removeAll()'s async callback — as before — let the worker die before create ran,
+// so the menu was never registered.) Re-creation throws a duplicate-id error, which
+// is expected and ignored. Called at worker top level + onInstalled + onStartup.
 function ensureContextMenu() {
-  chrome.contextMenus.removeAll(function () {
-    chrome.contextMenus.create({
-      id: "org-capture-clipboard",
-      title: "Org-capture full page (clipboard)",
-      contexts: ["page", "selection", "link", "image"]
-    }, function () {
-      if (chrome.runtime.lastError)
-        console.error("org-capture contextMenu create failed:", chrome.runtime.lastError.message);
-    });
+  chrome.contextMenus.create({
+    id: "org-capture-clipboard",
+    title: "Org-capture full page (clipboard)",
+    contexts: ["page", "selection", "link", "image"]
+  }, function () {
+    var e = chrome.runtime.lastError;
+    if (e && !/duplicate id/i.test(e.message))
+      console.error("org-capture contextMenu create failed:", e.message);
   });
 }
 
