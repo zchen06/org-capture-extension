@@ -152,8 +152,57 @@
   }
 
 
+  // Tracks compact nav/footer lines already emitted, so repeated menus (Squarespace
+  // renders the nav 3×) collapse to the distinct ones only. Reset per page capture.
+  var seenNavLines = {};
+
   function getPageAsOrg() {
-    return nodeToOrg(document.body, 0, false).trim().replace(/\n{3,}/g, '\n\n');
+    seenNavLines = {};
+    var out = nodeToOrg(document.body, 0, false).trim().replace(/\n{3,}/g, '\n\n');
+    return dedupeConsecutiveLines(out);
+  }
+
+  // Collapse an immediately-repeated phrase (carousels duplicate their slide text).
+  // Best-effort; length-guarded to avoid pathological backtracking.
+  function collapseRepeatPhrase(s) {
+    if (!s || s.length > 400) return s;
+    return s.replace(/(.{15,}?)(?:\s*\1)+/g, '$1');
+  }
+
+  // Drop consecutive identical non-empty lines (leftover repeated links/menus).
+  function dedupeConsecutiveLines(s) {
+    var out = [], prev = null;
+    s.split('\n').forEach(function (l) {
+      var key = l.trim();
+      if (key !== '' && key === prev) return;
+      out.push(l); prev = key;
+    });
+    return out.join('\n');
+  }
+
+  // Render a nav/footer block as one compact line of deduped links instead of a
+  // long inline list (e.g. "Nav: [[u][Home]] | [[u][About]] | ...").
+  function navToCompactLine(node, prefix) {
+    var seen = {}, parts = [];
+    var anchors = node.querySelectorAll ? node.querySelectorAll('a') : [];
+    Array.prototype.forEach.call(anchors, function (a) {
+      var href = a.href;
+      if (typeof href !== 'string')
+        href = (href && href.baseVal) || a.getAttribute('href') ||
+               a.getAttribute('xlink:href') || '';
+      if (!href || href.indexOf('javascript:') === 0 || href === '#') return;
+      var label = (a.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!label) return;
+      var key = label.toLowerCase();
+      if (seen[key]) return;
+      seen[key] = 1;
+      parts.push('[[' + href + '][' + label + ']]');
+    });
+    if (!parts.length) return '';
+    var line = prefix + ': ' + parts.join(' | ');
+    if (seenNavLines[line]) return '';
+    seenNavLines[line] = 1;
+    return '\n' + line + '\n';
   }
 
   function getSelectionAsOrg() {
@@ -165,7 +214,7 @@
   }
 
   var BLOCK_TAGS = new Set([
-    'div', 'section', 'article', 'header', 'footer', 'nav', 'aside',
+    'div', 'section', 'article', 'header', 'aside',
     'main', 'figure', 'figcaption', 'dl', 'dt', 'dd'
   ]);
 
@@ -176,6 +225,17 @@
 
     var tag = node.tagName.toLowerCase();
     var nowInPre = inPre || tag === 'pre';
+
+    // Skip true non-content / non-visible nodes.
+    if (node.getAttribute && node.getAttribute('aria-hidden') === 'true') return '';
+    try {
+      var _cs = window.getComputedStyle && getComputedStyle(node);
+      if (_cs && (_cs.display === 'none' || _cs.visibility === 'hidden')) return '';
+    } catch (e) {}
+
+    // Site chrome → one compact line of links instead of a long inline list.
+    if (tag === 'nav')    return navToCompactLine(node, 'Nav');
+    if (tag === 'footer') return navToCompactLine(node, 'Footer');
 
     if (!inPre && (tag === 'div' || tag === 'section')) {
       var tabResult = tryTabsToOrg(node, depth);
@@ -193,6 +253,10 @@
         if (typeof href !== 'string')
           href = (href && href.baseVal) || node.getAttribute('href') ||
                  node.getAttribute('xlink:href') || '';
+        // Description is the anchor's TEXT only — never the serialized children, so
+        // block content (e.g. an <img> with its #+ATTR_ORG line) is not crammed
+        // into [[..][..]]. Collapse repeated phrases (carousel slide text).
+        var label = collapseRepeatPhrase((node.textContent || '').replace(/\s+/g, ' ').trim());
         if (!href || href.startsWith('javascript:') || href === '#') {
           var realUrl = node.getAttribute('data-href') ||
                         node.getAttribute('data-url')  ||
@@ -200,11 +264,15 @@
                         node.getAttribute('data-file-url');
           if (realUrl) {
             try { realUrl = new URL(realUrl, location.href).href; } catch(e) {}
-            return '[[' + realUrl + '][' + children.replace(/\s+/g, ' ').trim() + ']]';
+            return label ? '[[' + realUrl + '][' + label + ']]' : '';
           }
-          return children;
+          // No usable href: if it wraps block/image content, emit that; else the label.
+          return label || children;
         }
-        return '[[' + href + '][' + children.replace(/\s+/g, ' ').trim() + ']]';
+        if (label) return '[[' + href + '][' + label + ']]';
+        // Anchor with no text (wraps an image/icon): emit the inner content
+        // (a clean image block) rather than an empty link.
+        return children.trim() ? children : '';
       }
       case 'b': case 'strong': { var t = children.trim(); return t ? '*' + t + '*' : ''; }
       case 'em': case 'i':     { var t = children.trim(); return t ? '/' + t + '/' : ''; }
