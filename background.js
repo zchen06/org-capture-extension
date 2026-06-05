@@ -42,6 +42,66 @@ chrome.runtime.onInstalled.addListener(function (details) {
       });
 });
 
+// Inject capture.js into a tab. In "clipboard" mode, first set a flag on the
+// shared content-script `window` (same isolated world) so capture.js routes the
+// full page through the clipboard instead of truncating into the URL.
+function injectCapture(tabId, mode) {
+  if (tabId == null) return;
+  if (mode === "clipboard") {
+    chrome.scripting.executeScript(
+      { target: { tabId: tabId }, func: function () { window.__ocMode = "clipboard"; } },
+      function () {
+        if (chrome.runtime.lastError) {
+          console.error("org-capture inject(flag) failed:", chrome.runtime.lastError.message);
+          return;
+        }
+        chrome.scripting.executeScript({ target: { tabId: tabId }, files: ["capture.js"] });
+      });
+  } else {
+    chrome.scripting.executeScript({ target: { tabId: tabId }, files: ["capture.js"] });
+  }
+}
+
+// Default path: clicking the toolbar icon (or Cmd/Ctrl+Shift+L) → truncate-to-fit.
 chrome.action.onClicked.addListener(function (tab) {
-  chrome.scripting.executeScript({target: {tabId: tab.id}, files: ["capture.js"]});
+  injectCapture(tab.id, "default");
+});
+
+// Clipboard path trigger #1: explicit keyboard command.
+chrome.commands.onCommand.addListener(function (command, tab) {
+  if (command !== "capture-page-clipboard") return;
+  if (tab && tab.id != null) {
+    injectCapture(tab.id, "clipboard");
+  } else {
+    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+      if (tabs[0]) injectCapture(tabs[0].id, "clipboard");
+    });
+  }
+});
+
+// Clipboard path trigger #2: right-click context-menu item.
+chrome.runtime.onInstalled.addListener(function () {
+  chrome.contextMenus.removeAll(function () {
+    chrome.contextMenus.create({
+      id: "org-capture-clipboard",
+      title: "Org-capture full page (clipboard)",
+      contexts: ["page", "selection", "link", "image"]
+    });
+  });
+});
+
+chrome.contextMenus.onClicked.addListener(function (info, tab) {
+  if (info.menuItemId === "org-capture-clipboard" && tab && tab.id != null) {
+    injectCapture(tab.id, "clipboard");
+  }
+});
+
+// Backfill new option defaults without clobbering the user's existing settings.
+chrome.runtime.onInstalled.addListener(function () {
+  chrome.storage.sync.get(["maxUrlLength", "clipboardTemplate"], function (cur) {
+    var patch = {};
+    if (cur.maxUrlLength === undefined) patch.maxUrlLength = 8000;
+    if (cur.clipboardTemplate === undefined) patch.clipboardTemplate = "C";
+    if (Object.keys(patch).length) chrome.storage.sync.set(patch);
+  });
 });

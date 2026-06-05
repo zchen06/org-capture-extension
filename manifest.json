@@ -9,7 +9,7 @@
     "service_worker": "background.js"
   },
 
-  "permissions": ["activeTab", "storage", "scripting"],
+  "permissions": ["activeTab", "storage", "scripting", "contextMenus"],
 
   "options_ui": {
     "page": "options.html"
@@ -25,6 +25,13 @@
       "suggested_key": {
         "default": "Ctrl+Shift+L",
         "mac": "Command+Shift+L"
+      }
+    },
+    "capture-page-clipboard": {
+      "description": "Capture full page via clipboard (untruncated)",
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+Shift+Y"
       }
     }
   }

@@ -26,30 +26,100 @@
 
   class Capture {
 
-   createCaptureURI() {
-     var protocol = "capture";
-     var template = (this.selection_text != "" ? this.selectedTemplate : this.unselectedTemplate);
-     var body = (this.selection_text != "" ? this.selection_text : this.page_text);
-     if (this.useNewStyleLinks)
-       return "org-protocol://"+protocol+"?template="+template+'&url='+this.encoded_url+'&title='+this.escaped_title+'&body='+body;
-     else
-       return "org-protocol://"+protocol+":/"+template+'/'+this.encoded_url+'/'+this.escaped_title+'/'+body;
-    }
-
     constructor() {
       this.window = window;
       this.document = document;
       this.location = location;
 
-      this.selection_text = escapeIt(getSelectionAsOrg());
-      this.page_text = escapeIt(getPageAsOrg());
+      // Keep the RAW (un-escaped) Org so the truncate path can cut on character
+      // boundaries; escaping happens later in buildURI().
+      this.selection_raw = getSelectionAsOrg();
+      this.page_raw = getPageAsOrg();
       this.encoded_url = encodeURIComponent(location.href);
       this.escaped_title = escapeIt(document.title);
 
+      this.mode = "default";   // "default" (truncate) | "clipboard"
+      this.truncated = false;
+    }
+
+    rawBody() {
+      return this.selection_raw !== "" ? this.selection_raw : this.page_raw;
+    }
+
+    templateFor() {
+      return this.selection_raw !== "" ? this.selectedTemplate : this.unselectedTemplate;
+    }
+
+    // Assemble a capture URI from an already-escaped body string.
+    buildURI(escapedBody) {
+      var template = this.templateFor();
+      if (this.useNewStyleLinks)
+        return "org-protocol://capture?template=" + template +
+               "&url=" + this.encoded_url + "&title=" + this.escaped_title +
+               "&body=" + escapedBody;
+      else
+        return "org-protocol://capture:/" + template + "/" +
+               this.encoded_url + "/" + this.escaped_title + "/" + escapedBody;
+    }
+
+    // Default path: fit the escaped body under maxUrlLength, truncating raw text
+    // if needed so Chrome will actually hand the org-protocol:// URL off to the OS.
+    createCaptureURI() {
+      var raw = this.rawBody();
+      var escaped = escapeIt(raw);
+      var uri = this.buildURI(escaped);
+      var max = this.maxUrlLength || 8000;
+      if (uri.length <= max) return uri;
+
+      this.truncated = true;
+      var overhead = uri.length - escaped.length;            // fixed prefix length
+      var markerLen = escapeIt("\n\n[... truncated " + raw.length + " chars ...]").length;
+
+      // Escaped length of a raw prefix; Infinity if escaping throws (e.g. a
+      // split surrogate), so the search treats that cut as over-budget.
+      function encLen(n) {
+        try { return escapeIt(raw.slice(0, n)).length; }
+        catch (e) { return Infinity; }
+      }
+
+      // Binary-search the longest raw prefix whose escaped form fits the budget.
+      var lo = 0, hi = raw.length, best = 0;
+      while (lo <= hi) {
+        var mid = (lo + hi) >> 1;
+        if (overhead + encLen(mid) + markerLen <= max) {
+          best = mid; lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      // Don't split a UTF-16 surrogate pair (e.g. an emoji) at the cut point,
+      // which would make encodeURIComponent throw.
+      if (best > 0) {
+        var c = raw.charCodeAt(best - 1);
+        if (c >= 0xD800 && c <= 0xDBFF) best--;
+      }
+      var cut = raw.length - best;
+      var truncatedRaw = raw.slice(0, best) + "\n\n[... truncated " + cut + " chars ...]";
+      return this.buildURI(escapeIt(truncatedRaw));
+    }
+
+    // Clipboard path: stash the FULL (untruncated) body on the system clipboard and
+    // send a short URL; an Emacs template (clipboardTemplate) yanks the body back.
+    createClipboardURI() {
+      copyToClipboard(this.rawBody());
+      var template = this.clipboardTemplate || "C";
+      if (this.useNewStyleLinks)
+        return "org-protocol://capture?template=" + template +
+               "&url=" + this.encoded_url + "&title=" + this.escaped_title;
+      else
+        return "org-protocol://capture:/" + template + "/" +
+               this.encoded_url + "/" + this.escaped_title + "/";
     }
 
     capture() {
-      var uri = this.createCaptureURI();
+      var uri = (this.mode === "clipboard")
+        ? this.createClipboardURI()
+        : this.createCaptureURI();
 
       if (this.debug) {
         logURI(uri);
@@ -58,26 +128,26 @@
       location.href = uri;
 
       if (this.overlay) {
-        toggleOverlay();
+        toggleOverlay(this.mode === "clipboard"
+          ? "Captured (clipboard)"
+          : (this.truncated ? "Captured (truncated)" : "Captured"));
       }
     }
 
     captureIt(options) {
-      if (chrome.runtime.lastError) {
-        alert("Could not capture url. Error loading options: " + chrome.runtime.lastError.message);
-        return;
-      }
+      try {
+        if (chrome.runtime.lastError) {
+          alert("Could not capture url. Error loading options: " + chrome.runtime.lastError.message);
+          return;
+        }
 
-      if (this.selection_text) {
-        this.template = this.selectedTemplate;
-        this.protocol = this.selectedProtocol;
-      } else {
-        this.template = this.unselectedTemplate;
-        this.protocol = this.unselectedProtocol;
+        for (var k in options) this[k] = options[k];
+        this.mode = (window.__ocMode === "clipboard") ? "clipboard" : "default";
+        this.capture();
+      } catch (e) {
+        console.error("org-capture failed:", e);
+        alert("org-capture failed: " + (e && e.message ? e.message : e));
       }
-
-      for(var k in options) this[k] = options[k];
-      this.capture();
     }
   }
 
@@ -272,7 +342,27 @@
     return uri;
   }
 
-  function toggleOverlay() {
+  // Copy text to the system clipboard from the content-script context. Uses a
+  // throwaway textarea + execCommand('copy') so it works without extra
+  // permissions or transient-activation issues.
+  function copyToClipboard(text) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.top = "-9999px";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+      document.execCommand("copy");
+    } catch (e) {
+      console.error("org-capture clipboard copy failed:", e);
+    }
+    document.body.removeChild(ta);
+  }
+
+  function toggleOverlay(label) {
     var outer_id = "org-capture-extension-overlay";
     var inner_id = "org-capture-extension-text";
     if (! document.getElementById(outer_id)) {
@@ -281,7 +371,7 @@
 
       var inner_div = document.createElement("div");
       inner_div.id = inner_id;
-      inner_div.innerHTML = "Captured";
+      inner_div.innerHTML = label || "Captured";
 
       outer_div.appendChild(inner_div);
       document.body.appendChild(outer_div);
@@ -330,7 +420,12 @@
   }
 
 
-  var capture = new Capture();
-  var f = function (options) {capture.captureIt(options)};
-  chrome.storage.sync.get(null, f);
+  try {
+    var capture = new Capture();
+    var f = function (options) { capture.captureIt(options); };
+    chrome.storage.sync.get(null, f);
+  } catch (e) {
+    console.error("org-capture failed:", e);
+    alert("org-capture failed: " + (e && e.message ? e.message : e));
+  }
 })();
