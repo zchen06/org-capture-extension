@@ -189,6 +189,10 @@
       case 'style': case 'script': case 'noscript': case 'template': return '';
       case 'a': {
         var href = node.href;
+        // SVG <a> exposes href as an SVGAnimatedString, not a string.
+        if (typeof href !== 'string')
+          href = (href && href.baseVal) || node.getAttribute('href') ||
+                 node.getAttribute('xlink:href') || '';
         if (!href || href.startsWith('javascript:') || href === '#') {
           var realUrl = node.getAttribute('data-href') ||
                         node.getAttribute('data-url')  ||

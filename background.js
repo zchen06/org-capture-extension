@@ -80,15 +80,24 @@ chrome.commands.onCommand.addListener(function (command, tab) {
 });
 
 // Clipboard path trigger #2: right-click context-menu item.
-chrome.runtime.onInstalled.addListener(function () {
+// Create idempotently and not solely on install — onInstalled is unreliable on a
+// manual unpacked reload, so also run at worker top level and on startup.
+function ensureContextMenu() {
   chrome.contextMenus.removeAll(function () {
     chrome.contextMenus.create({
       id: "org-capture-clipboard",
       title: "Org-capture full page (clipboard)",
       contexts: ["page", "selection", "link", "image"]
+    }, function () {
+      if (chrome.runtime.lastError)
+        console.error("org-capture contextMenu create failed:", chrome.runtime.lastError.message);
     });
   });
-});
+}
+
+ensureContextMenu();
+chrome.runtime.onInstalled.addListener(ensureContextMenu);
+chrome.runtime.onStartup.addListener(ensureContextMenu);
 
 chrome.contextMenus.onClicked.addListener(function (info, tab) {
   if (info.menuItemId === "org-capture-clipboard" && tab && tab.id != null) {
