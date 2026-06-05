@@ -112,7 +112,9 @@ chrome.runtime.onInstalled.addListener(function () {
   chrome.storage.sync.get(["maxUrlLength", "clipboardTemplate"], function (cur) {
     var patch = {};
     if (cur.maxUrlLength === undefined) patch.maxUrlLength = 8000;
-    if (cur.clipboardTemplate === undefined) patch.clipboardTemplate = "C";
+    // Default to "Y"; migrate the old default "C" (now taken by C-c C in Emacs).
+    if (cur.clipboardTemplate === undefined || cur.clipboardTemplate === "C")
+      patch.clipboardTemplate = "Y";
     if (Object.keys(patch).length) chrome.storage.sync.set(patch);
   });
 });

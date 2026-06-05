@@ -29,7 +29,7 @@ function save_options() {
     var debugP = document.getElementById('debug').checked;
     var overlayP = document.getElementById('overlay').checked;
     var maxUrl = parseInt(document.getElementById('maxUrlLength').value, 10) || 8000;
-    var clipTemp = document.getElementById('clipboardTemplate').value || 'C';
+    var clipTemp = document.getElementById('clipboardTemplate').value || 'Y';
 
     chrome.storage.sync.set({
         selectedTemplate: selTemp,
@@ -60,7 +60,7 @@ function restore_options() {
         debug: false,
         overlay: true,
         maxUrlLength: 8000,
-        clipboardTemplate: 'C'
+        clipboardTemplate: 'Y'
     }, function(options) {
         document.getElementById('unselTemplate').value = options.unselectedTemplate;
         document.getElementById('selTemplate').value = options.selectedTemplate;

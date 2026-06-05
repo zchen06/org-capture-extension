@@ -107,7 +107,7 @@
     // send a short URL; an Emacs template (clipboardTemplate) yanks the body back.
     createClipboardURI() {
       copyToClipboard(this.rawBody());
-      var template = this.clipboardTemplate || "C";
+      var template = this.clipboardTemplate || "Y";
       if (this.useNewStyleLinks)
         return "org-protocol://capture?template=" + template +
                "&url=" + this.encoded_url + "&title=" + this.escaped_title;
