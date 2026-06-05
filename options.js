@@ -59,7 +59,7 @@ function restore_options() {
         useNewStyleLinks: true,
         debug: false,
         overlay: true,
-        maxUrlLength: 8000,
+        maxUrlLength: 18000,
         clipboardTemplate: 'Y'
     }, function(options) {
         document.getElementById('unselTemplate').value = options.unselectedTemplate;
