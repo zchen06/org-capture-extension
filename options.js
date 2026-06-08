@@ -28,7 +28,6 @@ function save_options() {
     var NewStyleP = document.getElementById('useNewStyle').checked;
     var debugP = document.getElementById('debug').checked;
     var overlayP = document.getElementById('overlay').checked;
-    var maxUrl = parseInt(document.getElementById('maxUrlLength').value, 10) || 8000;
     var clipTemp = document.getElementById('clipboardTemplate').value || 'Y';
 
     chrome.storage.sync.set({
@@ -37,7 +36,6 @@ function save_options() {
         useNewStyleLinks: NewStyleP,
         debug: debugP,
         overlay: overlayP,
-        maxUrlLength: maxUrl,
         clipboardTemplate: clipTemp
     }, function() {
         // Update status to let user know options were saved.
@@ -59,7 +57,6 @@ function restore_options() {
         useNewStyleLinks: true,
         debug: false,
         overlay: true,
-        maxUrlLength: 18000,
         clipboardTemplate: 'Y'
     }, function(options) {
         document.getElementById('unselTemplate').value = options.unselectedTemplate;
@@ -67,7 +64,6 @@ function restore_options() {
         document.getElementById('useNewStyle').checked = options.useNewStyleLinks;
         document.getElementById('debug').checked = options.debug;
         document.getElementById('overlay').checked = options.overlay;
-        document.getElementById('maxUrlLength').value = options.maxUrlLength;
         document.getElementById('clipboardTemplate').value = options.clipboardTemplate;
     });
 }

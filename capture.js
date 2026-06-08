@@ -31,15 +31,15 @@
       this.document = document;
       this.location = location;
 
-      // Keep the RAW (un-escaped) Org so the truncate path can cut on character
-      // boundaries; escaping happens later in buildURI().
+      // Keep the RAW (un-escaped) Org; escaping happens later in buildURI().
       this.selection_raw = getSelectionAsOrg();
       this.page_raw = getPageAsOrg();
-      this.encoded_url = encodeURIComponent(location.href);
-      this.escaped_title = escapeIt(document.title);
+      this.encoded_url = encodeURIComponent(
+        this.isWorkspaceDoc() ? this.canonicalDocUrl() : location.href);
+      this.escaped_title = escapeIt(
+        this.isWorkspaceDoc() ? this.cleanGoogleTitle(document.title) : document.title);
 
-      this.mode = "default";   // "default" (truncate) | "clipboard"
-      this.truncated = false;
+      this.mode = "default";   // "default" (full body) | "clipboard"
     }
 
     rawBody() {
@@ -47,7 +47,28 @@
     }
 
     templateFor() {
+      if (this.isWorkspaceDoc()) return "L";   // title-only; no extractable body
       return this.selection_raw !== "" ? this.selectedTemplate : this.unselectedTemplate;
+    }
+
+    // --- Google Workspace (Docs/Sheets/Slides/Forms) ---
+    // These render content in a canvas/offscreen DOM, so there is no usable page
+    // body to extract.  Capture the title + canonical link only (template L); the
+    // converted document is fetched later in Emacs via the gdrive export route
+    // (my/org-download-file-at-point on the captured link).
+    isWorkspaceDoc() {
+      return /^https?:\/\/docs\.google\.com\/(document|spreadsheets|presentation|forms)\//
+        .test(this.location.href);
+    }
+
+    canonicalDocUrl() {
+      var m = this.location.href.match(
+        /^(https?:\/\/docs\.google\.com\/(?:document|spreadsheets|presentation|forms)\/d\/[^\/?#]+)/);
+      return m ? m[1] + "/edit" : this.location.href;
+    }
+
+    cleanGoogleTitle(t) {
+      return (t || "").replace(/\s+-\s+Google (Docs|Sheets|Slides|Forms)\s*$/, "");
     }
 
     // Assemble a capture URI from an already-escaped body string.
@@ -62,45 +83,12 @@
                this.encoded_url + "/" + this.escaped_title + "/" + escapedBody;
     }
 
-    // Default path: fit the escaped body under maxUrlLength, truncating raw text
-    // if needed so Chrome will actually hand the org-protocol:// URL off to the OS.
+    // Default path: send the FULL page/selection body, no length cap.
+    // (Very large pages that exceed the OS org-protocol:// URL limit should use
+    // the clipboard path — Cmd/Ctrl+Shift+Y.)
     createCaptureURI() {
-      var raw = this.rawBody();
-      var escaped = escapeIt(raw);
-      var uri = this.buildURI(escaped);
-      var max = this.maxUrlLength || 8000;
-      if (uri.length <= max) return uri;
-
-      this.truncated = true;
-      var overhead = uri.length - escaped.length;            // fixed prefix length
-      var markerLen = escapeIt("\n\n[... truncated " + raw.length + " chars ...]").length;
-
-      // Escaped length of a raw prefix; Infinity if escaping throws (e.g. a
-      // split surrogate), so the search treats that cut as over-budget.
-      function encLen(n) {
-        try { return escapeIt(raw.slice(0, n)).length; }
-        catch (e) { return Infinity; }
-      }
-
-      // Binary-search the longest raw prefix whose escaped form fits the budget.
-      var lo = 0, hi = raw.length, best = 0;
-      while (lo <= hi) {
-        var mid = (lo + hi) >> 1;
-        if (overhead + encLen(mid) + markerLen <= max) {
-          best = mid; lo = mid + 1;
-        } else {
-          hi = mid - 1;
-        }
-      }
-      // Don't split a UTF-16 surrogate pair (e.g. an emoji) at the cut point,
-      // which would make encodeURIComponent throw.
-      if (best > 0) {
-        var c = raw.charCodeAt(best - 1);
-        if (c >= 0xD800 && c <= 0xDBFF) best--;
-      }
-      var cut = raw.length - best;
-      var truncatedRaw = raw.slice(0, best) + "\n\n[... truncated " + cut + " chars ...]";
-      return this.buildURI(escapeIt(truncatedRaw));
+      var body = this.isWorkspaceDoc() ? "" : this.rawBody();
+      return this.buildURI(escapeIt(body));
     }
 
     // Clipboard path: stash the FULL (untruncated) body on the system clipboard and
@@ -128,9 +116,7 @@
       location.href = uri;
 
       if (this.overlay) {
-        toggleOverlay(this.mode === "clipboard"
-          ? "Captured (clipboard)"
-          : (this.truncated ? "Captured (truncated)" : "Captured"));
+        toggleOverlay(this.mode === "clipboard" ? "Captured (clipboard)" : "Captured");
       }
     }
 

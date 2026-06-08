@@ -62,7 +62,7 @@ function injectCapture(tabId, mode) {
   }
 }
 
-// Default path: clicking the toolbar icon (or Cmd/Ctrl+Shift+L) → truncate-to-fit.
+// Default path: clicking the toolbar icon (or Cmd/Ctrl+Shift+L) → full-body capture.
 chrome.action.onClicked.addListener(function (tab) {
   injectCapture(tab.id, "default");
 });
@@ -109,9 +109,11 @@ chrome.contextMenus.onClicked.addListener(function (info, tab) {
 
 // Backfill new option defaults without clobbering the user's existing settings.
 chrome.runtime.onInstalled.addListener(function () {
-  chrome.storage.sync.get(["maxUrlLength", "clipboardTemplate"], function (cur) {
+  // The URL-length cap was removed — the full body is always sent now.  Drop any
+  // previously-seeded maxUrlLength so old installs stop truncating.
+  chrome.storage.sync.remove("maxUrlLength");
+  chrome.storage.sync.get(["clipboardTemplate"], function (cur) {
     var patch = {};
-    if (cur.maxUrlLength === undefined) patch.maxUrlLength = 8000;
     // Default to "Y"; migrate the old default "C" (now taken by C-c C in Emacs).
     if (cur.clipboardTemplate === undefined || cur.clipboardTemplate === "C")
       patch.clipboardTemplate = "Y";
