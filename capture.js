@@ -34,8 +34,11 @@
       // Keep the RAW (un-escaped) Org; escaping happens later in buildURI().
       this.selection_raw = getSelectionAsOrg();
       this.page_raw = getPageAsOrg();
+      this.metadata_raw = getMetadataAsOrg();   // scholarly/dataset <head> block
       this.encoded_url = encodeURIComponent(
-        this.isWorkspaceDoc() ? this.canonicalDocUrl() : location.href);
+        this.isWorkspaceDoc() ? this.canonicalDocUrl()
+        : this.isPbiReport() ? this.cleanPbiUrl()
+        : location.href);
       this.escaped_title = escapeIt(
         this.isWorkspaceDoc() ? this.cleanGoogleTitle(document.title) : document.title);
 
@@ -43,7 +46,14 @@
     }
 
     rawBody() {
-      return this.selection_raw !== "" ? this.selection_raw : this.page_raw;
+      // A user selection wins outright — never inject metadata over a selection.
+      if (this.selection_raw !== "") return this.selection_raw;
+      var body = this.page_raw;
+      if (!this.metadata_raw) return body;
+      // Sparse body (JS/shadow-DOM page that yielded almost nothing, e.g. Figshare):
+      // use the <head> metadata AS the body.  Otherwise prepend it as a header.
+      var sparse = body.replace(/\s+/g, '').length < 200;
+      return sparse ? this.metadata_raw : (this.metadata_raw + '\n\n' + body);
     }
 
     templateFor() {
@@ -71,9 +81,72 @@
       return (t || "").replace(/\s+-\s+Google (Docs|Sheets|Slides|Forms)\s*$/, "");
     }
 
+    // --- Power BI Report Server (PBIRS) reports ---
+    // A Power BI report (/powerbi/?id=<guid>) renders every visual inside a
+    // cross-origin sandboxed iframe, so its data is unreachable from a content
+    // script.  Instead we fetch the report's metadata from the same-origin PBIRS
+    // REST API and clean up the noisy URL (drops the huge hostdata=/telemetry= junk).
+    isPbiReport() {
+      return /\/powerbi\//.test(this.location.href) && /[?&]id=/.test(this.location.href);
+    }
+
+    pbiReportId() {
+      var m = this.location.href.match(/[?&]id=([0-9a-fA-F-]+)/);
+      return m ? m[1] : '';
+    }
+
+    cleanPbiUrl() {
+      return this.location.origin + this.location.pathname + '?id=' + this.pbiReportId();
+    }
+
+    // Resolve report metadata via the REST API; PowerBIReports first, then the
+    // generic CatalogItems fallback.  Returns an Org body string ('' on failure).
+    fetchPbiMeta(id) {
+      var endpoints = [
+        '/Reports/api/v2.0/PowerBIReports(' + id + ')',
+        '/Reports/api/v2.0/CatalogItems(' + id + ')'
+      ];
+      function tryNext(i) {
+        if (i >= endpoints.length) return Promise.resolve(null);
+        return fetch(endpoints[i], { credentials: 'include',
+                                     headers: { 'Accept': 'application/json' } })
+          .then(function (r) { return r.ok ? r.json() : tryNext(i + 1); })
+          .catch(function () { return tryNext(i + 1); });
+      }
+      return tryNext(0).then(function (d) {
+        if (!d) return '';
+        var lines = [];
+        if (d.Path) lines.push('- *Path:* ' + d.Path);
+        var mod = (d.ModifiedDate || '').replace(/T.*$/, '');
+        if (d.ModifiedBy) mod += (mod ? ' by ' : 'by ') + d.ModifiedBy;
+        if (mod) lines.push('- *Modified:* ' + mod);
+        var out = lines.join('\n');
+        var desc = (d.Description || '').trim();
+        if (desc) out += (out ? '\n\n' : '') + desc;
+        return out;
+      });
+    }
+
+    // Async capture path for PBIRS reports: await the REST metadata, then navigate.
+    capturePbi() {
+      var self = this;
+      this.fetchPbiMeta(this.pbiReportId()).then(function (body) {
+        var uri = self.buildURI(escapeIt(body || ""), "F");
+        if (self.debug) logURI(uri);
+        self.location.href = uri;
+        if (self.overlay) toggleOverlay("Captured");
+      }).catch(function (e) {
+        // Network/auth failure → still capture title + clean URL (empty body).
+        console.error("org-capture PBIRS fetch failed:", e);
+        self.location.href = self.buildURI(escapeIt(""), "F");
+      });
+    }
+
     // Assemble a capture URI from an already-escaped body string.
-    buildURI(escapedBody) {
-      var template = this.templateFor();
+    // templateOverride forces a specific template (e.g. PBIRS always uses the
+    // full-body template "F"); otherwise the selection-aware default is used.
+    buildURI(escapedBody, templateOverride) {
+      var template = templateOverride || this.templateFor();
       if (this.useNewStyleLinks)
         return "org-protocol://capture?template=" + template +
                "&url=" + this.encoded_url + "&title=" + this.escaped_title +
@@ -105,6 +178,12 @@
     }
 
     capture() {
+      // PBIRS report: metadata must be fetched async before we can build the URI.
+      if (this.isPbiReport() && this.mode !== "clipboard") {
+        this.capturePbi();
+        return;
+      }
+
       var uri = (this.mode === "clipboard")
         ? this.createClipboardURI()
         : this.createCaptureURI();
@@ -146,6 +225,137 @@
     seenNavLines = {};
     var out = nodeToOrg(document.body, 0, false).trim().replace(/\n{3,}/g, '\n\n');
     return dedupeConsecutiveLines(out);
+  }
+
+  // --- Scholarly / dataset <head> metadata ------------------------------------
+  // Pages like Figshare, Zenodo, arXiv and journals JS-render their body (often in
+  // shadow DOM) but embed reliable bibliographic metadata in <head>: Highwire
+  // (citation_*), Dublin Core (DC.*), Open Graph (og:*) and schema.org JSON-LD.
+  // getMetadataAsOrg() turns that into an Org block; it is prepended to the body
+  // and, when the body walk comes up sparse, used as the body itself.
+
+  function metaContents(selector) {
+    var out = [];
+    document.querySelectorAll(selector).forEach(function (m) {
+      var c = (m.getAttribute('content') || '').trim();
+      if (c) out.push(c);
+    });
+    return out;
+  }
+
+  function firstMeta(/* selector, selector, ... */) {
+    for (var i = 0; i < arguments.length; i++) {
+      var v = metaContents(arguments[i]);
+      if (v.length) return v[0];
+    }
+    return '';
+  }
+
+  // Pull author names + textual fields out of one JSON-LD object (schema.org).
+  function jsonLdFields(obj) {
+    if (!obj || typeof obj !== 'object') return null;
+    var type = obj['@type'];
+    var types = Array.isArray(type) ? type : [type];
+    var wanted = ['Dataset', 'Article', 'ScholarlyArticle', 'CreativeWork',
+                  'Report', 'Book', 'Thesis'];
+    if (!types.some(function (t) { return wanted.indexOf(t) !== -1; })) return null;
+
+    function names(a) {
+      if (!a) return [];
+      a = Array.isArray(a) ? a : [a];
+      return a.map(function (x) {
+        return typeof x === 'string' ? x : (x && (x.name || '')) || '';
+      }).filter(Boolean);
+    }
+    function doiOf(id) {
+      if (!id) return '';
+      id = Array.isArray(id) ? id : [id];
+      for (var i = 0; i < id.length; i++) {
+        var s = typeof id[i] === 'string' ? id[i]
+              : (id[i] && (id[i].value || id[i]['@id'])) || '';
+        var m = String(s).match(/10\.\d{4,}\/\S+/);
+        if (m) return m[0];
+      }
+      return '';
+    }
+    return {
+      title:   obj.name || obj.headline || '',
+      authors: names(obj.author).concat(names(obj.creator)),
+      date:    obj.datePublished || obj.dateCreated || '',
+      doi:     doiOf(obj.identifier) || doiOf(obj['@id']) || doiOf(obj.url),
+      desc:    (obj.description || '').toString()
+    };
+  }
+
+  function collectJsonLd() {
+    var acc = { title: '', authors: [], date: '', doi: '', desc: '' };
+    document.querySelectorAll('script[type="application/ld+json"]').forEach(function (s) {
+      var data;
+      try { data = JSON.parse(s.textContent); } catch (e) { return; }
+      var items = Array.isArray(data) ? data
+                : (data && data['@graph']) ? data['@graph'] : [data];
+      items.forEach(function (it) {
+        var f = jsonLdFields(it);
+        if (!f) return;
+        if (!acc.title && f.title) acc.title = f.title;
+        if (!acc.date  && f.date)  acc.date  = f.date;
+        if (!acc.doi   && f.doi)   acc.doi   = f.doi;
+        if (!acc.desc  && f.desc)  acc.desc  = f.desc;
+        if (acc.authors.length === 0) acc.authors = f.authors;
+      });
+    });
+    return acc;
+  }
+
+  // Strip HTML tags / collapse whitespace (JSON-LD & citation_abstract may be HTML).
+  function plainText(s) {
+    if (!s) return '';
+    var d = document.createElement('div');
+    d.innerHTML = s;
+    return (d.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function getMetadataAsOrg() {
+    var ld = collectJsonLd();
+
+    var authors = metaContents('meta[name="citation_author" i]');
+    if (!authors.length) authors = metaContents('meta[name="DC.creator" i], meta[name="dc.creator" i]');
+    if (!authors.length) authors = ld.authors;
+
+    var date = firstMeta('meta[name="citation_publication_date" i]',
+                         'meta[name="citation_date" i]',
+                         'meta[name="DC.date" i]',
+                         'meta[property="article:published_time" i]') || ld.date;
+
+    var doi  = firstMeta('meta[name="citation_doi" i]',
+                         'meta[name="DC.identifier" i][scheme="doi" i]') || ld.doi;
+    var doiMatch = doi && doi.match(/10\.\d{4,}\/\S+/);
+    doi = doiMatch ? doiMatch[0] : '';
+
+    var journal = firstMeta('meta[name="citation_journal_title" i]',
+                            'meta[name="citation_conference_title" i]');
+
+    var abstract = plainText(
+      firstMeta('meta[name="citation_abstract" i]',
+                'meta[name="DC.description" i]',
+                'meta[property="og:description" i]',
+                'meta[name="description" i]') || ld.desc);
+
+    // Only emit a block if this really looks like a scholarly/dataset page.
+    var hasCitationMeta =
+      document.querySelector('meta[name="citation_title" i], meta[name="DC.title" i]') ||
+      doi || (ld.title && (authors.length || abstract));
+    if (!hasCitationMeta) return '';
+
+    var lines = [];
+    if (authors.length) lines.push('- *Authors:* ' + authors.join(', '));
+    if (date)    lines.push('- *Date:* ' + date);
+    if (journal) lines.push('- *Published in:* ' + journal);
+    if (doi)     lines.push('- *DOI:* [[https://doi.org/' + doi + '][' + doi + ']]');
+
+    var out = lines.join('\n');
+    if (abstract) out += (out ? '\n\n' : '') + abstract;
+    return out.trim();
   }
 
   // Collapse an immediately-repeated phrase (carousels duplicate their slide text).
@@ -228,7 +438,13 @@
       if (tabResult !== null) return tabResult;
     }
 
-    var children = Array.from(node.childNodes)
+    // Descend into an open shadow root too: web-component pages (e.g. Figshare)
+    // render their real content there, and it is NOT reachable via childNodes.
+    // (Closed shadow roots expose no shadowRoot and stay inaccessible.)
+    var kids = Array.from(node.childNodes);
+    if (node.shadowRoot)
+      kids = Array.from(node.shadowRoot.childNodes).concat(kids);
+    var children = kids
       .map(function(n) { return nodeToOrg(n, depth, nowInPre); }).join('');
 
     switch (tag) {
